@@ -1,0 +1,220 @@
+# views.py
+import os
+import cv2
+import io
+from io import BytesIO
+# import potrace
+from django.http import HttpResponseBadRequest
+from django.core.files.base import ContentFile
+from django.shortcuts import render, redirect
+from django.http import HttpResponse, JsonResponse
+from .models import UploadedImage
+from .forms import ImageUploadForm
+from django.conf import settings
+from django.core.files.base import ContentFile
+from svglib.svglib import svg2rlg
+from reportlab.graphics import renderPDF
+import cv2
+from PIL import Image, ImageFilter, ImageEnhance
+import uuid
+import time
+from django.core.files.base import ContentFile
+from urllib.parse import urljoin
+# for download
+
+
+def home(request):
+    form = ImageUploadForm()
+    return render(request, 'home.html', {'form': form})
+
+def image_to_vector(request):
+    form = ImageUploadForm()
+    return render(request, 'image_to_vector.html', {'form': form})
+
+
+def svg_to_eps(request):
+    form = ImageUploadForm()
+    return render(request, 'svg_to_eps.html', {'form': form})
+
+
+def upscaledimage(request):
+    form = ImageUploadForm()
+    return render(request, 'upscaled_image.html', {'form': form})
+
+
+def upload_image(request):
+    if request.method == 'POST':
+        form = ImageUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            upscale_factor = int(request.POST.get('upscale'))
+            image = form.save()
+            try:
+                # Upscale the image
+                upscale_image(image, upscale_factor)
+
+                # Set the image URL for download
+                image_url = image.upscale_image.url
+
+                # Pass the image URL to home.html
+                return render(request, 'upscaled_now_download.html', {'image_url': image_url})
+            except Exception as e:
+                error_message = "Error upscaling the image: " + str(e)
+                return HttpResponseBadRequest(error_message)
+        else:
+            # Form is not valid, handle the form errors here
+            error_message = "Error: File formate not supported. Please use another image!."
+            return HttpResponseBadRequest(error_message)
+    else:
+        form = ImageUploadForm()
+    return render(request, 'home.html', {'form': form})
+
+
+def upscale_image(image, upscale_factor, sharpness=1, smoothness=1):
+    img = Image.open(image.image.path)
+
+    # Get the original file extension
+    original_extension = os.path.splitext(image.image.path)[1]
+
+    # Generate a unique filename for the upscaled image with the original extension
+    unique_name = f"upscaled_{str(uuid.uuid4())}{original_extension}"
+
+    # Calculate the new width and height
+    new_width = img.width * upscale_factor
+    new_height = img.height * upscale_factor
+
+    # Resize the image with the LANCZOS filter for higher quality
+    img = img.resize((new_width, new_height), Image.LANCZOS)
+
+    # Apply sharpening filter
+    img_sharpened = img.filter(ImageFilter.SHARPEN)
+
+    # Apply Gaussian blur for smoothing
+    img_smoothed = img_sharpened.filter(ImageFilter.GaussianBlur(radius=smoothness))
+
+    # Apply sharpening filter again to enhance details
+    enhancer_sharpness = ImageEnhance.Sharpness(img_smoothed)
+    img_final = enhancer_sharpness.enhance(sharpness)
+
+    # Save the upscaled image in the uploaded_images directory
+    upscale_path = os.path.join('media', 'uploaded_images', unique_name)
+    img_final.save(upscale_path)
+
+    # Update the image object with the path to the upscaled image
+    image.upscale_image = os.path.join('uploaded_images', unique_name)
+    image.save()
+    
+    
+    
+def image_detail(request, pk):
+    image = UploadedImage.objects.get(pk=pk)
+    return render(request, 'home.html', {'image': image})
+# download function
+
+# end download
+
+
+def download_upscaled_image(request, pk):
+    image = UploadedImage.objects.get(pk=pk)
+    file_path = image.upscale_image.path
+
+    with open(file_path, 'rb') as file:
+        response = FileResponse(file)
+
+        # Get the original file extension from the file name
+        _, original_extension = os.path.splitext(os.path.basename(file_path))
+
+        # Set the content type based on the original file's extension
+        content_type = f'image/{original_extension.lstrip(".")}'
+        response['Content-Type'] = content_type
+
+        # Set the content disposition with the original extension
+        response['Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
+        return response
+# end download function
+
+# image to victor
+
+
+def imagetovictor(request):
+    if request.method == 'POST':
+        form = ImageUploadForm(request.POST, request.FILES)
+        if form.is_valid():
+            # Manually set the image field with a unique filename
+            unique_id = str(uuid.uuid4())
+            unique_filename = f'{unique_id}_{form.cleaned_data["image"].name}'
+
+            # Read the file content
+            file_content = request.FILES['image'].file.read()
+
+            # Create a ContentFile with the file content and the unique filename
+            content_file = ContentFile(file_content)
+            content_file.name = unique_filename
+
+            # Save the uploaded image to the database
+            uploaded_image = form.save(commit=False)
+            uploaded_image.image = content_file
+            uploaded_image.save()
+
+            # Get the path to the uploaded image file
+            image_path = uploaded_image.image.path
+
+            # Perform image processing (optional)
+            # For example, you can apply Gaussian blur to reduce noise
+            img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            img = cv2.GaussianBlur(img, (5, 5), 0)
+
+            # Save the processed image to the folder with the processed filename
+            processed_filename = f'output_vector_{unique_filename}'
+            processed_image_path = os.path.join(
+                settings.MEDIA_ROOT, 'uploaded_images', processed_filename)
+            cv2.imwrite(processed_image_path, img)
+
+            # Update the 'upscale_image' field with the processed filename
+            uploaded_image.upscale_image = processed_filename
+            uploaded_image.save()
+
+            # Construct the URL for the processed image
+            processed_image_url = urljoin(
+                '/media/uploaded_images/', processed_filename)
+
+            return render(request, 'imagetovector_download.html', {'form': form, 'processed_image_url': processed_image_url})
+    else:
+        form = ImageUploadForm()
+
+    return render(request, 'imagetovector_download.html', {'form': form})
+
+# svg image to EPS
+
+
+def svgToeps(request):
+    if request.method == 'POST' and request.FILES.get('image'):
+        uploaded_svg = request.FILES['image']
+
+        # Check if the uploaded file is an SVG
+        if uploaded_svg.name.endswith('.svg'):
+            # Generate a unique filename for the EPS file
+            unique_filename = f"{uuid.uuid4().hex}.eps"
+
+            # Convert SVG to EPSac
+            drawing = svg2rlg(uploaded_svg)
+            eps_file = ContentFile(b'', name=unique_filename)
+            renderPDF.drawToFile(drawing, eps_file)
+
+            # Save the EPS file to the media folder and database
+            uploaded_image = UploadedImage(image=eps_file)
+            uploaded_image.save()
+
+            # Debug: Print the path where the image is stored
+            print("Stored image path:", uploaded_image.image.path)
+
+            # Pass the uploaded_image to the template context
+            context = {'uploaded_image': uploaded_image}
+
+            # Render the template with the context
+            return render(request, 'eps_file_download.html', context)
+        else:
+            # Return an error message if the file is not an SVG
+            return JsonResponse({'error': 'Uploaded file is not an SVG.'}, status=400)
+    else:
+        # Return an error message for invalid requests
+        return JsonResponse({'error': 'Invalid request.'}, status=400)
