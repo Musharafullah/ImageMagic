@@ -29,8 +29,8 @@ SECRET_KEY = 'django-insecure--t4+5n&!k&1g7x_l#t^li0kb@g2o5+!e)gj0)qsfumfbq5fo4w
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-# ALLOWED_HOSTS = ['www.imagemagichub.com', '91.108.113.161']
+
+ALLOWED_HOSTS = ['www.imagemagichub.com', '91.108.113.161']
 
 
 # Application definition

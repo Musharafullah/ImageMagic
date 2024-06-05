@@ -11,7 +11,9 @@
  :before {
     --tw-content: ""
 }
-
+.logo{
+        width: 16.5rem;
+    }
 html {
     -webkit-text-size-adjust: 100%;
     font-feature-settings: normal;
